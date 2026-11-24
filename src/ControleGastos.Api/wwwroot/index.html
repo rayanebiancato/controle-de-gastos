@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Controle de Gastos</title>
+  <style>
+    :root { color-scheme: light; font-family: system-ui, sans-serif; }
+    body { margin: 0; background: #f3f4f6; color: #1f2937; }
+    main { max-width: 1100px; margin: 0 auto; padding: 24px; }
+    h1 { margin-top: 0; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
+    .card { background: white; border-radius: 10px; padding: 20px; box-shadow: 0 2px 8px #00000012; }
+    form, .filters { display: grid; gap: 12px; }
+    label { display: grid; gap: 5px; font-size: .9rem; font-weight: 600; }
+    input, select, button { box-sizing: border-box; border: 1px solid #d1d5db; border-radius: 6px; padding: 9px; font: inherit; }
+    button { border: 0; background: #2563eb; color: white; cursor: pointer; font-weight: 600; }
+    button:hover { background: #1d4ed8; }
+    button.danger { background: #dc2626; padding: 6px 10px; }
+    .filters { grid-template-columns: repeat(3, 1fr) auto; align-items: end; }
+    .summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 16px; }
+    .metric { background: #eff6ff; border-radius: 8px; padding: 12px; }
+    .metric strong { display: block; font-size: 1.2rem; margin-top: 4px; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 10px 6px; text-align: left; border-bottom: 1px solid #e5e7eb; }
+    .message { min-height: 24px; margin: 12px 0; font-weight: 600; }
+    .error { color: #b91c1c; }
+    .success { color: #15803d; }
+    @media (max-width: 700px) { .filters { grid-template-columns: 1fr 1fr; } table { display: block; overflow-x: auto; } }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Controle de Gastos</h1>
+    <div id="message" class="message" role="status"></div>
+
+    <section class="grid">
+      <div class="card">
+        <h2>Novo gasto</h2>
+        <form id="expense-form">
+          <label>Descrição
+            <input id="descricao" required minlength="3" maxlength="100" placeholder="Ex.: Almoço executivo">
+          </label>
+          <label>Valor (R$)
+            <input id="valor" required type="number" min="0.01" step="0.01" placeholder="0,00">
+          </label>
+          <label>Data
+            <input id="data" required type="datetime-local">
+          </label>
+          <label>Categoria
+            <select id="categoria" required>
+              <option value="Alimentacao">Alimentação</option>
+              <option value="Transporte">Transporte</option>
+              <option value="Moradia">Moradia</option>
+              <option value="Lazer">Lazer</option>
+              <option value="Saude">Saúde</option>
+              <option value="Outros">Outros</option>
+            </select>
+          </label>
+          <button type="submit">Cadastrar gasto</button>
+        </form>
+      </div>
+
+      <div class="card">
+        <h2>Consultar período</h2>
+        <div class="filters">
+          <label>Mês
+            <input id="mes" type="number" min="1" max="12" required>
+          </label>
+          <label>Ano
+            <input id="ano" type="number" min="1" required>
+          </label>
+          <span></span>
+          <button id="filter-button" type="button">Atualizar</button>
+        </div>
+        <div id="summary" class="summary" style="margin-top: 20px"></div>
+      </div>
+    </section>
+
+    <section class="card" style="margin-top: 16px">
+      <h2>Gastos do período</h2>
+      <div id="expenses">Carregando...</div>
+    </section>
+  </main>
+
+  <script>
+    const api = '/api/gastos';
+    const categoryNames = {
+      Alimentacao: 'Alimentação', Transporte: 'Transporte', Moradia: 'Moradia',
+      Lazer: 'Lazer', Saude: 'Saúde', Outros: 'Outros'
+    };
+    const money = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
+    const dateFormat = new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
+    const message = document.getElementById('message');
+
+    function setMessage(text, isError = false) {
+      message.textContent = text;
+      message.className = `message ${isError ? 'error' : 'success'}`;
+    }
+
+    async function readError(response) {
+      try {
+        const body = await response.json();
+        return body.error || body.title || `Erro ${response.status}`;
+      } catch { return `Erro ${response.status}`; }
+    }
+
+    function period() {
+      return { mes: Number(document.getElementById('mes').value), ano: Number(document.getElementById('ano').value) };
+    }
+
+    async function loadData(showMessage = false) {
+      const { mes, ano } = period();
+      if (!mes || !ano) return;
+      try {
+        const [expensesResponse, summaryResponse] = await Promise.all([
+          fetch(`${api}?mes=${mes}&ano=${ano}`),
+          fetch(`${api}/resumo?mes=${mes}&ano=${ano}`)
+        ]);
+        if (!expensesResponse.ok) throw new Error(await readError(expensesResponse));
+        if (!summaryResponse.ok) throw new Error(await readError(summaryResponse));
+        renderExpenses(await expensesResponse.json());
+        renderSummary(await summaryResponse.json());
+        if (showMessage) setMessage('Período atualizado.');
+      } catch (error) { setMessage(error.message, true); }
+    }
+
+    function renderSummary(summary) {
+      document.getElementById('summary').innerHTML = `
+        <div class="metric">Limite<strong>${money.format(summary.limiteMensal)}</strong></div>
+        <div class="metric">Total<strong>${money.format(summary.totalGasto)}</strong></div>
+        <div class="metric">Saldo<strong>${money.format(summary.saldoRestante)}</strong></div>
+        <div class="metric">Uso<strong>${summary.percentualUtilizado.toFixed(2)}%</strong></div>
+        <div class="metric">Status<strong>${summary.statusOrcamento}</strong></div>`;
+    }
+
+    function renderExpenses(expenses) {
+      const container = document.getElementById('expenses');
+      if (!expenses.length) { container.textContent = 'Nenhum gasto encontrado neste período.'; return; }
+      container.innerHTML = `<table><thead><tr><th>Descrição</th><th>Valor</th><th>Data</th><th>Categoria</th><th></th></tr></thead><tbody>${
+        expenses.map(expense => `<tr><td>${escapeHtml(expense.descricao)}</td><td>${money.format(expense.valor)}</td><td>${dateFormat.format(new Date(expense.data))}</td><td>${categoryNames[expense.categoria] || expense.categoria}</td><td><button class="danger" data-id="${expense.id}">Excluir</button></td></tr>`).join('')
+      }</tbody></table>`;
+      container.querySelectorAll('[data-id]').forEach(button => button.addEventListener('click', () => removeExpense(button.dataset.id)));
+    }
+
+    function escapeHtml(value) { return String(value).replace(/[&<>'"]/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[character])); }
+
+    async function removeExpense(id) {
+      if (!confirm('Deseja excluir este gasto?')) return;
+      const response = await fetch(`${api}/${id}`, { method: 'DELETE' });
+      if (!response.ok) { setMessage(await readError(response), true); return; }
+      setMessage('Gasto excluído com sucesso.');
+      await loadData();
+    }
+
+    document.getElementById('expense-form').addEventListener('submit', async event => {
+      event.preventDefault();
+      const payload = {
+        descricao: document.getElementById('descricao').value,
+        valor: Number(document.getElementById('valor').value),
+        data: new Date(document.getElementById('data').value).toISOString(),
+        categoria: document.getElementById('categoria').value
+      };
+      const response = await fetch(api, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      if (!response.ok) { setMessage(await readError(response), true); return; }
+      const created = await response.json();
+      document.getElementById('expense-form').reset();
+      setMessage(`Gasto cadastrado. Status do orçamento: ${created.alertaOrcamento}`);
+      await loadData();
+    });
+
+    document.getElementById('filter-button').addEventListener('click', () => loadData(true));
+    const now = new Date();
+    document.getElementById('mes').value = now.getMonth() + 1;
+    document.getElementById('ano').value = now.getFullYear();
+    now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+    document.getElementById('data').value = now.toISOString().slice(0, 16);
+    loadData();
+  </script>
+</body>
+</html>
